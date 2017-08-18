@@ -84,6 +84,12 @@ masquerade_tg(struct sk_buff *skb, const struct xt_action_param *par)
 	return nf_nat_setup_info(ct, &newrange, IP_NAT_MANIP_SRC);
 }
 
+static int
+device_cmp(struct nf_conn *i, void *ifindex)
+{
+	return 0;
+}
+
 static int masq_device_event(struct notifier_block *this,
 			     unsigned long event,
 			     void *ptr)
@@ -97,7 +103,7 @@ static int masq_device_event(struct notifier_block *this,
 		   and forget them. */
 		NF_CT_ASSERT(dev->ifindex != 0);
 
-		nf_ct_iterate_cleanup(net, 0,
+		nf_ct_iterate_cleanup(net, device_cmp,
 				      (void *)(long)dev->ifindex);
 	}
 
