@@ -82,7 +82,6 @@ nf_nat_fn(unsigned int hooknum,
 {
 	struct nf_conn *ct;
 	enum ip_conntrack_info ctinfo;
-	struct nf_conn_nat *nat;
 	/* maniptype == SRC for postrouting. */
 	enum nf_nat_manip_type maniptype = HOOK2MANIP(hooknum);
 
@@ -101,18 +100,6 @@ nf_nat_fn(unsigned int hooknum,
 	/* Don't try to NAT if this packet is not conntracked */
 	if (nf_ct_is_untracked(ct))
 		return NF_ACCEPT;
-
-	nat = nfct_nat(ct);
-	if (!nat) {
-		/* NAT module was loaded late. */
-		if (nf_ct_is_confirmed(ct))
-			return NF_ACCEPT;
-		nat = nf_ct_ext_add(ct, NF_CT_EXT_NAT, GFP_ATOMIC);
-		if (nat == NULL) {
-			pr_debug("failed to add NAT extension\n");
-			return NF_ACCEPT;
-		}
-	}
 
 	switch (ctinfo) {
 	case IP_CT_RELATED:

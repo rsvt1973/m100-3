@@ -47,7 +47,6 @@ static unsigned int
 masquerade_tg(struct sk_buff *skb, const struct xt_action_param *par)
 {
 	struct nf_conn *ct;
-	struct nf_conn_nat *nat;
 	enum ip_conntrack_info ctinfo;
 	struct nf_nat_range newrange;
 	const struct nf_nat_multi_range_compat *mr;
@@ -57,7 +56,6 @@ masquerade_tg(struct sk_buff *skb, const struct xt_action_param *par)
 	NF_CT_ASSERT(par->hooknum == NF_INET_POST_ROUTING);
 
 	ct = nf_ct_get(skb, &ctinfo);
-	nat = nfct_nat(ct);
 
 	NF_CT_ASSERT(ct && (ctinfo == IP_CT_NEW || ctinfo == IP_CT_RELATED ||
 			    ctinfo == IP_CT_RELATED_REPLY));
@@ -76,8 +74,6 @@ masquerade_tg(struct sk_buff *skb, const struct xt_action_param *par)
 		return NF_DROP;
 	}
 
-	nat->masq_index = par->out->ifindex;
-
 	/* Transfer from original range. */
 	newrange = ((struct nf_nat_range)
 		{ mr->range[0].flags | IP_NAT_RANGE_MAP_IPS,
@@ -86,17 +82,6 @@ masquerade_tg(struct sk_buff *skb, const struct xt_action_param *par)
 
 	/* Hand modified range to generic setup. */
 	return nf_nat_setup_info(ct, &newrange, IP_NAT_MANIP_SRC);
-}
-
-static int
-device_cmp(struct nf_conn *i, void *ifindex)
-{
-	const struct nf_conn_nat *nat = nfct_nat(i);
-
-	if (!nat)
-		return 0;
-
-	return nat->masq_index == (int)(long)ifindex;
 }
 
 static int masq_device_event(struct notifier_block *this,
@@ -112,7 +97,7 @@ static int masq_device_event(struct notifier_block *this,
 		   and forget them. */
 		NF_CT_ASSERT(dev->ifindex != 0);
 
-		nf_ct_iterate_cleanup(net, device_cmp,
+		nf_ct_iterate_cleanup(net, 0,
 				      (void *)(long)dev->ifindex);
 	}
 

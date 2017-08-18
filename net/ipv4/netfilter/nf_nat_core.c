@@ -272,17 +272,6 @@ nf_nat_setup_info(struct nf_conn *ct,
 {
 	struct net *net = nf_ct_net(ct);
 	struct nf_conntrack_tuple curr_tuple, new_tuple;
-	struct nf_conn_nat *nat;
-
-	/* nat helper or nfctnetlink also setup binding */
-	nat = nfct_nat(ct);
-	if (!nat) {
-		nat = nf_ct_ext_add(ct, NF_CT_EXT_NAT, GFP_ATOMIC);
-		if (nat == NULL) {
-			pr_debug("failed to add NAT extension\n");
-			return NF_ACCEPT;
-		}
-	}
 
 	NF_CT_ASSERT(maniptype == IP_NAT_MANIP_SRC ||
 		     maniptype == IP_NAT_MANIP_DST);
@@ -317,13 +306,6 @@ nf_nat_setup_info(struct nf_conn *ct,
 
 		srchash = hash_by_src(net, nf_ct_zone(ct),
 				      &ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple);
-		spin_lock_bh(&nf_nat_lock);
-		/* nf_conntrack_alter_reply might re-allocate exntension aera */
-		nat = nfct_nat(ct);
-		nat->ct = ct;
-		hlist_add_head_rcu(&nat->bysource,
-				   &net->ipv4.nat_bysource[srchash]);
-		spin_unlock_bh(&nf_nat_lock);
 	}
 
 	/* It's done. */
@@ -532,44 +514,6 @@ void nf_nat_protocol_unregister(const struct nf_nat_protocol *proto)
 }
 EXPORT_SYMBOL(nf_nat_protocol_unregister);
 
-/* No one using conntrack by the time this called. */
-static void nf_nat_cleanup_conntrack(struct nf_conn *ct)
-{
-	struct nf_conn_nat *nat = nf_ct_ext_find(ct, NF_CT_EXT_NAT);
-
-	if (nat == NULL || nat->ct == NULL)
-		return;
-
-	NF_CT_ASSERT(nat->ct->status & IPS_SRC_NAT_DONE);
-
-	spin_lock_bh(&nf_nat_lock);
-	hlist_del_rcu(&nat->bysource);
-	spin_unlock_bh(&nf_nat_lock);
-}
-
-static void nf_nat_move_storage(void *new, void *old)
-{
-	struct nf_conn_nat *new_nat = new;
-	struct nf_conn_nat *old_nat = old;
-	struct nf_conn *ct = old_nat->ct;
-
-	if (!ct || !(ct->status & IPS_SRC_NAT_DONE))
-		return;
-
-	spin_lock_bh(&nf_nat_lock);
-	hlist_replace_rcu(&old_nat->bysource, &new_nat->bysource);
-	spin_unlock_bh(&nf_nat_lock);
-}
-
-static struct nf_ct_ext_type nat_extend __read_mostly = {
-	.len		= sizeof(struct nf_conn_nat),
-	.align		= __alignof__(struct nf_conn_nat),
-	.destroy	= nf_nat_cleanup_conntrack,
-	.move		= nf_nat_move_storage,
-	.id		= NF_CT_EXT_NAT,
-	.flags		= NF_CT_EXT_F_PREALLOC,
-};
-
 #if defined(CONFIG_NF_CT_NETLINK) || defined(CONFIG_NF_CT_NETLINK_MODULE)
 
 #include <linux/netfilter/nfnetlink.h>
@@ -723,12 +667,6 @@ static int __init nf_nat_init(void)
 
 	need_ipv4_conntrack();
 
-	ret = nf_ct_extend_register(&nat_extend);
-	if (ret < 0) {
-		printk(KERN_ERR "nf_nat_core: Unable to register extension\n");
-		return ret;
-	}
-
 	ret = register_pernet_subsys(&nf_nat_net_ops);
 	if (ret < 0)
 		goto cleanup_extend;
@@ -757,7 +695,6 @@ static int __init nf_nat_init(void)
 	return 0;
 
  cleanup_extend:
-	nf_ct_extend_unregister(&nat_extend);
 	return ret;
 }
 
@@ -765,7 +702,6 @@ static void __exit nf_nat_cleanup(void)
 {
 	unregister_pernet_subsys(&nf_nat_net_ops);
 	nf_ct_l3proto_put(l3proto);
-	nf_ct_extend_unregister(&nat_extend);
 	rcu_assign_pointer(nf_nat_seq_adjust_hook, NULL);
 	rcu_assign_pointer(nfnetlink_parse_nat_setup_hook, NULL);
 	rcu_assign_pointer(nf_ct_nat_offset, NULL);
